@@ -1,7 +1,9 @@
+// Uygulamanın çekirdeği: ortak yardımcılar, kurulum, Günlük, yemek ekleme, Profil.
+// Diğer bölümler (oruç, ilerleme, tarifler, yapay zekâ, barkod, egzersiz) kendini App'e kaydeder.
 (function () {
   'use strict';
 
-  var SURUM = '0.1';
+  var SURUM = '0.2';
 
   Depo.yukle();
   function V() { return Depo.v; }
@@ -14,10 +16,19 @@
   ];
   var AYLAR = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
   var GUNLER = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+  var GUN_KISA = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
   var HEDEF_AD = { ver: 'Kilo vermek', koru: 'Kilomu korumak', al: 'Kilo almak' };
   var MAKRO_VARSAYILAN = { c: 45, p: 25, f: 30 };
 
   var S = { sekme: 'gunluk', tarih: bugun(), kur: null, sheet: null, reg: [] };
+
+  // Kayıt defterleri: diğer dosyalar buraya ekler
+  var SEKME_HTML = {};      // sekme id -> function() -> html
+  var SEKME_SONRA = {};     // sekme id -> function() (çizimden sonra)
+  var SHEETLER = {};        // tur -> function(s) -> html
+  var KISA = { elle: 1, su: 1 };
+  var GIRIS = {};           // input id -> function(el)
+  var DEGISIM = {};         // change id -> function(el)
 
   // ---------- yardımcılar ----------
   var IK = {
@@ -40,7 +51,13 @@
     indir: 'M12 4v11 M7 10l5 5 5-5 M5 20h14',
     yukle: 'M12 20V9 M7 14l5-5 5 5 M5 4h14',
     damla: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
-    hedef: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'
+    hedef: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+    yz: 'M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
+    kosu: 'M13 4.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0 M7 21l3-6 3 2v5 M6 12l3-4 4 1 2 3h3 M10 15l-1-4',
+    ayar: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5a7 7 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.6a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z',
+    liste: 'M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01',
+    tik: 'M5 12l5 5L20 7',
+    saat: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7v5l3 2'
   };
   function ik(ad, cls) {
     return '<svg class="ikon ' + (cls || '') + '" viewBox="0 0 24 24" aria-hidden="true"><path d="' + IK[ad] + '"/></svg>';
@@ -69,6 +86,7 @@
     var d = Hesap.anahtardanTarih(k);
     return d.getDate() + ' ' + AYLAR[d.getMonth()] + ' ' + GUNLER[d.getDay()];
   }
+  function kisaTarih(k) { var d = Hesap.anahtardanTarih(k); return d.getDate() + ' ' + AYLAR[d.getMonth()].slice(0, 3); }
   function $(id) { return document.getElementById(id); }
 
   var toastZaman;
@@ -76,7 +94,7 @@
     var t = $('toast');
     t.textContent = m; t.hidden = false;
     clearTimeout(toastZaman);
-    toastZaman = setTimeout(function () { t.hidden = true; }, 2200);
+    toastZaman = setTimeout(function () { t.hidden = true; }, 2400);
   }
   function kaydet() {
     Depo.kaydet();
@@ -97,6 +115,46 @@
   }
   function miktarYazi(birim, adet) {
     return birim === 'g' ? sayi(adet) + ' g' : sayi(adet, true) + ' ' + birim;
+  }
+
+  // Yaklaşık besin puanı (kalori yoğunluğu + protein + yağ oranı)
+  function besinPuani(y) {
+    if (y.k < 8) return { ad: 'Çok iyi', renk: '#1E9E6A' };
+    var pr = y.p * 4 / y.k, fr = y.f * 9 / y.k, s = 0;
+    if (y.k <= 100) s += 2; else if (y.k <= 250) s += 1; else if (y.k > 450) s -= 1;
+    if (pr >= 0.25) s += 2; else if (pr >= 0.15) s += 1;
+    if (fr > 0.6) s -= 1;
+    if (s >= 3) return { ad: 'Çok iyi', renk: '#1E9E6A' };
+    if (s >= 1) return { ad: 'İyi', renk: '#7BBF3A' };
+    if (s === 0) return { ad: 'Orta', renk: '#F2B33D' };
+    return { ad: 'Ölçülü tüket', renk: '#F2743B' };
+  }
+
+  // ---------- günlük hedefler ----------
+  function orucGunuMu(k) {
+    var o = V().oruc;
+    if (!o || (o.plan !== '5:2' && o.plan !== '6:1')) return false;
+    return (o.haftaGunleri || []).indexOf(Hesap.anahtardanTarih(k).getDay()) >= 0;
+  }
+  function anaHedef() { var A = V().ayarlar; return A.kaloriElle || V().profil.kalori; }
+  function gunHedef(k) {
+    if (orucGunuMu(k)) return V().profil.cinsiyet === 'erkek' ? 600 : 500;
+    return anaHedef();
+  }
+  function yakilan(k) {
+    var g = Depo.gunOku(k), t = 0;
+    g.egzersiz.forEach(function (e) { t += e.k; });
+    return t;
+  }
+  function profilKiloGuncelle(kg, tarih) {
+    var p = V().profil, b = tarih || bugun();
+    var kl = V().kilolar.filter(function (x) { return x.tarih !== b; });
+    kl.push({ tarih: b, kg: kg });
+    kl.sort(function (a, c) { return a.tarih < c.tarih ? -1 : 1; });
+    V().kilolar = kl;
+    p.kilo = kl[kl.length - 1].kg;
+    p.kalori = Hesap.hedefKalori(p);
+    kaydet();
   }
 
   // ---------- KURULUM ----------
@@ -127,7 +185,7 @@
       ['0.5', '🚶', '0,5 kg / hafta', 'Önerilen'],
       ['0.75', '🏃', '0,75 kg / hafta', 'Hızlı'],
       ['1', '🚀', '1 kg / hafta', 'Çok hızlı, zorlayıcı']] },
-    { id: 'aktivite', baslik: 'Ne kadar hareketlisin?', acik: 'Spor dışında günlük hayatını düşün.', tip: 'sec', alan: 'aktivite', sec: [
+    { id: 'aktivite', baslik: 'Ne kadar hareketlisin?', acik: 'Spor dışında günlük hayatını düşün. Sporu Günlük ekranından ayrıca ekleyeceksin.', tip: 'sec', alan: 'aktivite', sec: [
       ['az', '🪑', Hesap.AKTIVITE.az.ad, Hesap.AKTIVITE.az.acik],
       ['hafif', '🚶', Hesap.AKTIVITE.hafif.ad, Hesap.AKTIVITE.hafif.acik],
       ['orta', '🚴', Hesap.AKTIVITE.orta.ad, Hesap.AKTIVITE.orta.acik],
@@ -197,13 +255,7 @@
     var eski = V().profil;
     p.baslangic = eski && eski.baslangic ? eski.baslangic : { tarih: bugun(), kg: p.kilo };
     V().profil = p;
-    // kiloyu bugünün kaydı olarak yaz
-    var kl = V().kilolar, b = bugun();
-    kl = kl.filter(function (x) { return x.tarih !== b; });
-    kl.push({ tarih: b, kg: p.kilo });
-    kl.sort(function (a, c) { return a.tarih < c.tarih ? -1 : 1; });
-    V().kilolar = kl;
-    kaydet();
+    profilKiloGuncelle(p.kilo);
     var duzen = S.kur.duzen;
     S.kur = null;
     S.sekme = duzen ? 'profil' : 'gunluk';
@@ -260,7 +312,7 @@
       });
     } else {
       var tip = a.tip === 'metin' ? 'type="text" autocomplete="given-name"' : 'type="text" inputmode="' + (a.ondalik ? 'decimal' : 'numeric') + '"';
-      h += '<div class="buyuk-giris"><input id="kurGiris" ' + tip + ' data-i="kur" value="' + esc(t[a.alan]) + '" placeholder="' + esc(a.ph || '') + '" enterkeyhint="next"' +
+      h += '<div class="buyuk-giris"><input id="kurGiris" ' + tip + ' value="' + esc(t[a.alan]) + '" placeholder="' + esc(a.ph || '') + '" enterkeyhint="next"' +
         (a.tip === 'metin' ? ' style="width:100%;font-size:36px"' : '') + '>' + (a.birim ? '<span>' + a.birim + '</span>' : '') + '</div>';
     }
     h += '<p class="hata" id="kurHata">' + esc(k.hata) + '</p></div>';
@@ -284,45 +336,50 @@
     var sk = SEKMELER.filter(function (s) { return s.id === S.sekme; })[0];
     var h = '<header class="ust"><div class="alt">Furkan\'ın Zayıflama Serüveni</div><h1>' + esc(sk.ad) + '</h1></header>';
     h += '<main class="icerik">';
-    if (S.sekme === 'gunluk') h += gunlukHtml();
-    else if (S.sekme === 'profil') h += profilHtml();
-    else h += yakindaHtml(S.sekme);
+    h += (SEKME_HTML[S.sekme] || function () { return ''; })();
     h += '</main><nav class="sekmeler">';
     SEKMELER.forEach(function (s) {
       h += '<button class="' + (s.id === S.sekme ? 'secili' : '') + '" data-a="sekme" data-v="' + s.id + '">' + ik(s.ik) + s.ad + '</button>';
     });
     h += '</nav>';
     $('app').innerHTML = h;
+    if (SEKME_SONRA[S.sekme]) SEKME_SONRA[S.sekme]();
   }
 
-  function gunlukHtml() {
+  function halkaHtml(oran, ortaB, ortaSpan, asti, boyut) {
+    var C = 2 * Math.PI * 60;
+    return '<div class="halka' + (asti ? ' asti' : '') + '"' + (boyut ? ' style="width:' + boyut + 'px;height:' + boyut + 'px"' : '') + '><svg viewBox="0 0 140 140"><circle class="iz" cx="70" cy="70" r="60" fill="none" stroke-width="12"/>' +
+      '<circle class="dolu" cx="70" cy="70" r="60" fill="none" stroke-width="12" stroke-linecap="round" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + (C * (1 - Math.max(0, Math.min(1, oran)))).toFixed(1) + '"/></svg>' +
+      '<div class="orta"><b>' + ortaB + '</b><span>' + ortaSpan + '</span></div></div>';
+  }
+
+  SEKME_HTML.gunluk = function () {
     var p = V().profil, g = Depo.gunOku(S.tarih), A = V().ayarlar;
     var top = Hesap.topla(g.kayitlar);
-    var yakilan = 0;
-    var hedef = p.kalori + yakilan;
+    var yak = yakilan(S.tarih);
+    var temel = gunHedef(S.tarih);
+    var hedef = temel + (A.yakilanEkle ? yak : 0);
     var kalan = hedef - top.k;
     var asti = kalan < 0;
-    var C = 2 * Math.PI * 60;
-    var oran = Math.min(1, hedef ? top.k / hedef : 0);
-    var mg = Hesap.makroGram(p.kalori, p.makro);
+    var mg = Hesap.makroGram(temel, p.makro);
 
     var h = '<div class="tarih"><button class="ok" data-a="gun" data-v="-1" aria-label="Önceki gün">' + ik('sol') + '</button>' +
       '<button class="gun" data-a="bugun">' + esc(tarihEtiket(S.tarih)) + '</button>' +
       '<button class="ok" data-a="gun" data-v="1" aria-label="Sonraki gün">' + ik('sag') + '</button></div>';
 
+    if (orucGunuMu(S.tarih)) h += '<div class="bant">⏱️ Bugün ' + esc(V().oruc.plan) + ' oruç günün: hedef ' + temel + ' kcal</div>';
+
     h += '<section class="kart"><div class="ozet">' +
       '<div class="yan"><b>' + sayi(top.k) + '</b><span>Yenen</span></div>' +
-      '<div class="halka' + (asti ? ' asti' : '') + '"><svg viewBox="0 0 140 140"><circle class="iz" cx="70" cy="70" r="60" fill="none" stroke-width="12"/>' +
-      '<circle class="dolu" cx="70" cy="70" r="60" fill="none" stroke-width="12" stroke-linecap="round" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + (C * (1 - (asti ? 1 : oran))).toFixed(1) + '"/></svg>' +
-      '<div class="orta"><b>' + sayi(Math.abs(kalan)) + '</b><span>' + (asti ? 'kcal fazla' : 'kcal kaldı') + '</span></div></div>' +
-      '<div class="yan"><b>' + sayi(yakilan) + '</b><span>Yakılan</span></div></div>';
+      halkaHtml(asti ? 1 : (hedef ? top.k / hedef : 0), sayi(Math.abs(kalan)), asti ? 'kcal fazla' : 'kcal kaldı', asti) +
+      '<div class="yan"><b>' + sayi(yak) + '</b><span>Yakılan</span></div></div>';
     h += '<div class="makrolar">' +
       makroHtml('c', 'Karbonhidrat', top.c, mg.c) + makroHtml('p', 'Protein', top.p, mg.p) + makroHtml('f', 'Yağ', top.f, mg.f) + '</div></section>';
 
     OGUNLER.forEach(function (o) {
       var ks = g.kayitlar.filter(function (e) { return e.ogun === o.id; });
       var t = Hesap.topla(ks);
-      var oneri = Math.round(p.kalori * (A.ogunOran[o.id] || 0) / 100 / 10) * 10;
+      var oneri = Math.round(temel * (A.ogunOran[o.id] || 0) / 100 / 10) * 10;
       h += '<section class="kart"><div class="ogun-bas"><div class="ogun-ikon">' + o.em + '</div>' +
         '<div class="bilgi"><b>' + o.ad + '</b><span>' + (ks.length ? sayi(t.k) + ' / ' : 'Önerilen ') + sayi(oneri) + ' kcal</span></div>' +
         '<button class="arti" data-a="ekle" data-v="' + o.id + '" aria-label="' + o.ad + ' ekle">' + ik('arti') + '</button></div>';
@@ -336,6 +393,20 @@
       h += '</section>';
     });
 
+    // Egzersiz
+    h += '<section class="kart"><div class="ogun-bas"><div class="ogun-ikon" style="background:color-mix(in srgb,var(--uyari) 16%,transparent)">🏃</div>' +
+      '<div class="bilgi"><b>Egzersiz</b><span>' + (g.egzersiz.length ? sayi(yak) + ' kcal yakıldı' : 'Spor, yürüyüş, adım') + '</span></div>' +
+      '<button class="arti" data-a="egzersizEkle" aria-label="Egzersiz ekle">' + ik('arti') + '</button></div>';
+    if (g.egzersiz.length) {
+      h += '<div class="kayitlar">';
+      g.egzersiz.forEach(function (e) {
+        h += '<button class="kayit" data-a="egzersizAc" data-v="' + e.id + '"><span class="ad"><b>' + esc(e.ad) + '</b><span>' + esc(e.aciklama || '') + '</span></span><span class="kcal">−' + sayi(e.k) + '</span></button>';
+      });
+      h += '</div>';
+    }
+    h += '</section>';
+
+    // Su
     var bardak = A.bardak, dolu = Math.round((g.su || 0) / bardak);
     var adet = Math.min(16, Math.max(Math.ceil(A.suHedef / bardak), dolu + 1));
     h += '<section class="kart"><div class="ogun-bas"><div class="ogun-ikon" style="background:color-mix(in srgb,var(--su) 18%,transparent)">💧</div>' +
@@ -345,7 +416,7 @@
     }
     h += '</div></section>';
     return h;
-  }
+  };
 
   function makroHtml(cls, ad, deger, hedef) {
     var o = hedef ? Math.min(100, deger / hedef * 100) : 0;
@@ -353,31 +424,24 @@
       '<div class="deger">' + sayi(deger) + ' / ' + hedef + ' g</div></div>';
   }
 
-  function yakindaHtml(sekme) {
-    var B = {
-      oruc: ['⏱️', 'Oruç sayacı', 'Sıradaki güncellemelerde geliyor:', ['16:8, 5:2 ve 6:1 planları', 'Geri sayım halkası', 'Oruç evreleri', 'Bitince bildirim']],
-      tarifler: ['🍲', 'Tarifler', 'Sıradaki güncellemelerde geliyor:', ['Hazır Türk yemeği tarifleri', '"Elimde ne var?" ile yapay zekâ tarifi', 'Filtreler ve alışveriş listesi', 'Adım adım pişirme modu']],
-      ilerleme: ['📈', 'İlerleme', 'Sıradaki güncellemelerde geliyor:', ['Kilo grafiği', 'Haftalık ve aylık kalori', 'Vücut ölçüleri ve ruh hali', 'Rozetler']]
-    }[sekme];
-    return '<div class="kart yakinda-kart"><div class="em">' + B[0] + '</div><h2>' + B[1] + '</h2><p>' + B[2] + '</p><ul>' +
-      B[3].map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul></div>';
-  }
-
-  function profilHtml() {
+  SEKME_HTML.profil = function () {
     var p = V().profil, A = V().ayarlar;
     var h = '<section class="kart"><div class="profil-bas"><div class="avatar">' + esc(p.ad.charAt(0).toLocaleUpperCase('tr-TR')) + '</div>' +
       '<div><h2>' + esc(p.ad) + '</h2><span style="color:var(--soluk)">' + HEDEF_AD[p.hedef] + (p.hiz ? ' · ' + sayi(p.hiz, true) + ' kg/hafta' : '') + '</span></div></div>';
     h += '<div class="bilgi-izgara">' +
-      '<div><span>Günlük hedef</span><b>' + sayi(p.kalori) + ' kcal</b></div>' +
+      '<div><span>Günlük hedef</span><b>' + sayi(anaHedef()) + ' kcal</b></div>' +
       '<div><span>Şu anki kilo</span><b>' + sayi(p.kilo, true) + ' kg</b></div>' +
       '<div><span>Hedef kilo</span><b>' + (p.hedefKilo ? sayi(p.hedefKilo, true) + ' kg' : '—') + '</b></div>' +
       '<div><span>Başlangıç</span><b>' + sayi(p.baslangic ? p.baslangic.kg : p.kilo, true) + ' kg</b></div>' +
       '<div><span>Boy · Yaş</span><b>' + p.boy + ' cm · ' + Hesap.yas(p.dogumYili) + '</b></div>' +
       '<div><span>Hareket</span><b style="font-size:15px">' + Hesap.AKTIVITE[p.aktivite].ad + '</b></div></div></section>';
 
-    h += '<section class="kart" style="padding-top:2px;padding-bottom:2px">' +
+    h += '<div class="bolum-bas">Ayarlar</div><section class="kart" style="padding-top:2px;padding-bottom:2px">' +
       '<button class="satir-dugme" data-a="profilDuzenle">' + ik('hedef') + '<span>Profili ve hedefi düzenle</span>' + ik('sag') + '</button>' +
-      '<button class="satir-dugme" data-a="suAyar">' + ik('damla') + '<span>Su hedefi</span><small>' + sayi(A.suHedef / 1000, true) + ' L · bardak ' + A.bardak + ' ml</small></button>' +
+      '<button class="satir-dugme" data-a="hedefAyar">' + ik('ayar') + '<span>Kalori, makro ve öğün dağılımı</span>' + ik('sag') + '</button>' +
+      '<button class="satir-dugme" data-a="suAyar">' + ik('damla') + '<span>Su hedefi</span><small>' + litre(A.suHedef) + ' L · bardak ' + A.bardak + ' ml</small></button>' +
+      '<button class="satir-dugme" data-a="yzAyar">' + ik('yz') + '<span>Yapay zekâ (Gemini)</span><small>' + (A.geminiAnahtar ? '✅ kurulu' : 'kurulmadı') + '</small></button>' +
+      '<button class="satir-dugme" data-a="yemeklerim">' + ik('liste') + '<span>Yemeklerim</span><small>' + V().yemeklerim.length + '</small></button>' +
       '</section>';
 
     h += '<div class="bolum-bas">Yedekleme</div><section class="kart" style="padding-top:2px;padding-bottom:2px">' +
@@ -387,7 +451,7 @@
       '</section>';
     h += '<p class="surum">Furkan\'ın Zayıflama Serüveni · Sürüm ' + SURUM + '<br>Veriler yalnızca bu telefonda saklanır.</p>';
     return h;
-  }
+  };
 
   // ---------- ALT ÇEKMECE ----------
   function sheetAc() {
@@ -400,8 +464,10 @@
       sh.classList.add('acik'); pe.classList.add('acik');
     }
   }
+  var KAPANIS = [];
   function sheetKapat() {
     var sh = $('sheet'), pe = $('perde');
+    KAPANIS.forEach(function (f) { try { f(S.sheet); } catch (e) {} });
     S.sheet = null;
     sh.classList.remove('acik'); pe.classList.remove('acik');
     setTimeout(function () { if (!S.sheet) { sh.hidden = true; pe.hidden = true; sh.innerHTML = ''; } }, 320);
@@ -411,12 +477,13 @@
   function renderSheet() {
     var s = S.sheet, sh = $('sheet');
     if (!s) return;
-    sh.classList.toggle('kisa', s.tur === 'elle' || s.tur === 'su');
-    if (s.tur === 'ekle') sh.innerHTML = ekleHtml(s);
-    else if (s.tur === 'detay') sh.innerHTML = detayHtml(s);
-    else if (s.tur === 'elle') sh.innerHTML = elleHtml(s);
-    else if (s.tur === 'su') sh.innerHTML = suHtml();
+    sh.classList.toggle('kisa', !!KISA[s.tur]);
+    sh.classList.toggle('tam', s.tur === 'pisir');
+    sh.innerHTML = SHEETLER[s.tur](s);
+    sh.scrollTop = 0;
   }
+  // Başka bir çekmeceye geç (geri ile dönülebilir)
+  function sheetGec(yeni) { yeni.geri = S.sheet; S.sheet = yeni; renderSheet(); }
 
   function basHtml(baslik, solAksiyon, sag) {
     return '<div class="sheet-bas"><button data-a="' + solAksiyon + '" aria-label="' + (solAksiyon === 'geri' ? 'Geri' : 'Kapat') + '">' + ik(solAksiyon === 'geri' ? 'sol' : 'kapat') + '</button>' +
@@ -424,22 +491,22 @@
   }
 
   // Yemek ekleme / arama
-  function ekleHtml(s) {
+  SHEETLER.ekle = function (s) {
     var h = basHtml(ogunAd(s.ogun) + ' ekle', 'kapat');
     h += '<div class="sheet-govde"><div class="arama">' + ik('ara') +
       '<input id="araKutu" type="search" placeholder="Yemek ara… (ör. mercimek)" value="' + esc(s.q) + '" autocomplete="off" autocorrect="off" enterkeyhint="search"></div>';
     h += '<div class="hizli">' +
-      '<button class="yakinda" data-a="yakinda">' + ik('kamera') + 'Fotoğraf</button>' +
-      '<button class="yakinda" data-a="yakinda">' + ik('barkod') + 'Barkod</button>' +
-      '<button class="yakinda" data-a="yakinda">' + ik('mik') + 'Sesle</button>' +
+      '<button data-a="foto">' + ik('kamera') + 'Fotoğraf</button>' +
+      '<button data-a="barkod">' + ik('barkod') + 'Barkod</button>' +
+      '<button data-a="anlat">' + ik('mik') + 'Sesle</button>' +
       '<button data-a="elle">' + ik('kalem') + 'Hızlı ekle</button></div>';
     h += '<div id="sonuclar">' + sonuclarHtml(s) + '</div></div>';
     return h;
-  }
+  };
 
   function tumYemekler() {
     var gor = {}, l = [];
-    V().favoriler.concat(V().sonlar, YEMEKLER).forEach(function (y) {
+    V().yemeklerim.concat(V().favoriler, V().sonlar, YEMEKLER).forEach(function (y) {
       var k = Hesap.duz(y.ad + '|' + (y.marka || ''));
       if (gor[k]) return; gor[k] = 1; l.push(y);
     });
@@ -460,11 +527,12 @@
     var h = '';
     if (!s.q.trim()) {
       h += '<div class="sekme-sec"><button class="' + (s.sekme === 'son' ? 'secili' : '') + '" data-a="ekleSekme" data-v="son">Son eklenenler</button>' +
-        '<button class="' + (s.sekme === 'fav' ? 'secili' : '') + '" data-a="ekleSekme" data-v="fav">Favoriler</button></div>';
-      var l = s.sekme === 'son' ? V().sonlar : V().favoriler;
+        '<button class="' + (s.sekme === 'fav' ? 'secili' : '') + '" data-a="ekleSekme" data-v="fav">Favoriler</button>' +
+        '<button class="' + (s.sekme === 'benim' ? 'secili' : '') + '" data-a="ekleSekme" data-v="benim">Yemeklerim</button></div>';
+      var l = s.sekme === 'son' ? V().sonlar : s.sekme === 'fav' ? V().favoriler : V().yemeklerim;
       if (!l.length) {
-        h += '<div class="bos"><span class="em">' + (s.sekme === 'son' ? '🍽️' : '⭐') + '</span>' +
-          (s.sekme === 'son' ? 'Henüz bir şey eklemedin. Yukarıdan ara.' : 'Bir yemeğin sayfasında yıldıza dokunarak favorilere ekle.') + '</div>';
+        h += '<div class="bos"><span class="em">' + (s.sekme === 'son' ? '🍽️' : s.sekme === 'fav' ? '⭐' : '📒') + '</span>' +
+          (s.sekme === 'son' ? 'Henüz bir şey eklemedin. Yukarıdan ara.' : s.sekme === 'fav' ? 'Bir yemeğin sayfasında yıldıza dokunarak favorilere ekle.' : '"Hızlı ekle"de "Yemeklerime kaydet"i seçersen burada görünür.') + '</div>';
       } else {
         h += '<div class="liste" style="margin-top:10px">' + l.map(yemekSatir).join('') + '</div>';
       }
@@ -473,7 +541,8 @@
     var r = Hesap.ara(tumYemekler(), s.q, 40);
     if (r.length) h += '<div class="liste">' + r.map(yemekSatir).join('') + '</div>';
     else h += '<div class="bos"><span class="em">🔍</span>Listede bulunamadı.</div>';
-    h += '<button class="dis-ara" data-a="elle">Aradığını bulamadın mı? Kendin gir</button>';
+    h += '<button class="dis-ara" data-a="yzSor">' + ik('yz') + ' "' + esc(s.q.trim()) + '" için yapay zekâya sor</button>';
+    h += '<button class="dis-ara ikincil" data-a="elle">Kendin gir</button>';
     return h;
   }
 
@@ -482,18 +551,20 @@
     if (el && S.sheet && S.sheet.tur === 'ekle') el.innerHTML = sonuclarHtml(S.sheet);
   }
 
-  // Open Food Facts ürününü yemek nesnesine çevirir (barkod özelliği kullanacak)
+  // Open Food Facts ürününü yemek nesnesine çevirir
   function offDonustur(u) {
     var n = u.nutriments || {};
     var k = n['energy-kcal_100g'];
     if (k == null && n.energy_100g != null) k = n.energy_100g / 4.184;
-    var ad = (u.product_name_tr || u.product_name || '').trim();
-    if (!ad || k == null || isNaN(k)) return null;
+    if (k == null || isNaN(k)) return null;
+    var marka = (u.brands || '').split(',')[0].trim();
+    var ad = (u.product_name_tr || u.product_name || u.product_name_en || u.generic_name_tr || u.generic_name || '').trim();
+    if (!ad) ad = marka ? marka + ' ürünü' : 'Barkodlu ürün';
     var birimler = [];
     var sq = Number(u.serving_quantity);
     if (sq > 0 && sq < 2000) birimler.push({ ad: 'porsiyon', g: Math.round(sq) });
     return {
-      ad: ad, marka: (u.brands || '').split(',')[0].trim(), barkod: u.code || '',
+      ad: ad, marka: marka, barkod: u.code || '',
       k: Math.round(k), p: Hesap.yuvarla(Number(n.proteins_100g) || 0), c: Hesap.yuvarla(Number(n.carbohydrates_100g) || 0),
       f: Hesap.yuvarla(Number(n.fat_100g) || 0), birimler: birimler, kaynak: 'off'
     };
@@ -502,15 +573,18 @@
   // Yemek detayı
   function detayAc(y, ayar) {
     var v = ayar.kayit ? { birim: ayar.kayit.birim, adet: ayar.kayit.adet } : varsayilan(y);
-    S.sheet = { tur: 'detay', y: y, ogun: ayar.ogun, birim: v.birim, adet: String(v.adet).replace('.', ','), kayitId: ayar.kayit ? ayar.kayit.id : null, geri: ayar.geri || null };
-    sheetAc();
+    var yeni = { tur: 'detay', y: y, ogun: ayar.ogun, birim: v.birim, adet: String(v.adet).replace('.', ','), kayitId: ayar.kayit ? ayar.kayit.id : null, tarih: ayar.tarih || S.tarih, geri: ayar.geri || null };
+    var acik = !!S.sheet;
+    S.sheet = yeni;
+    if (acik) renderSheet(); else sheetAc();
   }
 
-  function detayHtml(s) {
-    var y = s.y, fav = Depo.favoriMi(y.ad);
+  SHEETLER.detay = function (s) {
+    var y = s.y, fav = Depo.favoriMi(y.ad), bp = besinPuani(y);
     var h = basHtml('', s.geri ? 'geri' : 'kapat',
       '<button class="yildiz' + (fav ? ' dolu' : '') + '" data-a="favori" aria-label="Favori">' + ik('yildiz') + '</button>');
-    h += '<div class="sheet-govde"><div class="detay-bas"><h2>' + esc(y.ad) + '</h2>' + (y.marka ? '<span>' + esc(y.marka) + '</span>' : '') + '</div>';
+    h += '<div class="sheet-govde"><div class="detay-bas"><h2>' + esc(y.ad) + '</h2>' + (y.marka ? '<span>' + esc(y.marka) + '</span>' : '') +
+      '<div><span class="puan" style="background:' + bp.renk + '">Besin puanı: ' + bp.ad + '</span></div></div>';
     h += '<div class="miktar"><input id="adetKutu" type="text" inputmode="decimal" value="' + esc(s.adet) + '" aria-label="Miktar">' +
       '<select id="birimSec" aria-label="Birim">';
     (y.birimler || []).forEach(function (b) {
@@ -521,12 +595,12 @@
     h += '<div class="ogun-sec">' + OGUNLER.map(function (o) {
       return '<button class="' + (s.ogun === o.id ? 'secili' : '') + '" data-a="ogunSec" data-v="' + o.id + '">' + o.em + ' ' + o.ad + '</button>';
     }).join('') + '</div>';
-    h += '<p class="not100">100 g: ' + sayi(y.k) + ' kcal · K ' + sayi(y.c, true) + ' g · P ' + sayi(y.p, true) + ' g · Y ' + sayi(y.f, true) + ' g' +
-      (y.kaynak === 'off' ? '<br>Kaynak: Open Food Facts' : (y.kaynak === 'elle' ? '' : '<br>Değerler yaklaşık ortalamadır')) + '</p></div>';
+    var kaynak = { off: 'Kaynak: Open Food Facts', ai: 'Yapay zekâ tahmini, miktarı kontrol et', elle: 'Elle girildi', tarif: 'Tariften' }[y.kaynak] || 'Değerler yaklaşık ortalamadır';
+    h += '<p class="not100">100 g: ' + sayi(y.k) + ' kcal · K ' + sayi(y.c, true) + ' g · P ' + sayi(y.p, true) + ' g · Y ' + sayi(y.f, true) + ' g<br>' + kaynak + '</p></div>';
     h += '<div class="sheet-alt"><button class="dugme" data-a="detayKaydet">' + (s.kayitId ? 'Kaydet' : 'Ekle') + '</button>' +
       (s.kayitId ? '<button class="dugme tehlike" data-a="kayitSil">' + ik('cop') + 'Sil</button>' : '') + '</div>';
     return h;
-  }
+  };
 
   function detayCanliHtml(s) {
     var adet = oku(s.adet);
@@ -537,11 +611,11 @@
       '<div class="f"><b>' + sayi(b.f, true) + ' g</b><span>Yağ</span></div></div>';
   }
 
-  function kayitYaz(y, ogun, birim, adet, eskiId) {
+  function kayitYaz(y, ogun, birim, adet, eskiId, tarih) {
     var gram = gramBul(y, birim, adet);
     var b = Hesap.besin(y, gram);
     var e = { id: eskiId || Depo.yeniId(), ogun: ogun, ad: y.ad, birim: birim, adet: adet, gram: gram, k: b.k, p: b.p, c: b.c, f: b.f, y: Depo.yemekKopya(y) };
-    var g = Depo.gun(S.tarih);
+    var g = Depo.gun(tarih || S.tarih);
     if (eskiId) g.kayitlar = g.kayitlar.map(function (x) { return x.id === eskiId ? e : x; });
     else g.kayitlar.push(e);
     Depo.sonaEkle(y, birim, adet);
@@ -552,25 +626,27 @@
   function detayKaydet() {
     var s = S.sheet, adet = oku(s.adet);
     if (!(adet > 0)) { toast('Miktarı yaz'); return; }
-    kayitYaz(s.y, s.ogun, s.birim, adet, s.kayitId);
+    kayitYaz(s.y, s.ogun, s.birim, adet, s.kayitId, s.tarih);
     render();
-    if (s.geri) { S.sheet = s.geri; S.sheet.ogun = s.ogun; renderSheet(); }
+    if (s.geri && s.geri.tur === 'ekle') { S.sheet = s.geri; S.sheet.ogun = s.ogun; renderSheet(); }
     else sheetKapat();
     toast((s.kayitId ? 'Kaydedildi: ' : 'Eklendi: ') + s.y.ad);
   }
 
   // Hızlı (elle) ekleme
-  function elleHtml(s) {
+  SHEETLER.elle = function (s) {
     var h = basHtml('Hızlı ekle', 'geri');
-    h += '<div class="sheet-govde"><p style="color:var(--soluk);font-size:14px;margin-bottom:14px">Listede olmayan bir şeyi bir porsiyon olarak elle gir. Yalnızca ad ve kalori zorunlu.</p>' +
-      '<div class="form-alan"><label for="eAd">Ne yedin?</label><input id="eAd" type="text" placeholder="ör. Annemin böreği"></div>' +
-      '<div class="form-alan"><label for="eK">Kalori (kcal)</label><input id="eK" type="text" inputmode="numeric" placeholder="ör. 350"></div>' +
+    h += '<div class="sheet-govde"><p class="ipucu">Listede olmayan bir şeyi bir porsiyon olarak elle gir. Yalnızca ad ve kalori zorunlu.</p>' +
+      '<div class="form-alan"><label for="eAd">Ne yedin?</label><input id="eAd" type="text" placeholder="ör. Annemin böreği" value="' + esc(s.ad || '') + '"></div>' +
+      '<div class="form-alan"><label for="eK">Bir porsiyonun kalorisi (kcal)</label><input id="eK" type="text" inputmode="numeric" placeholder="ör. 350"></div>' +
       '<div class="uc"><div class="form-alan"><label for="eC">Karb. (g)</label><input id="eC" type="text" inputmode="decimal"></div>' +
       '<div class="form-alan"><label for="eP">Protein (g)</label><input id="eP" type="text" inputmode="decimal"></div>' +
       '<div class="form-alan"><label for="eF">Yağ (g)</label><input id="eF" type="text" inputmode="decimal"></div></div>' +
-      '<button class="dugme" data-a="elleKaydet" style="margin-top:6px">' + esc(ogunAd(s.ogun)) + ' öğününe ekle</button></div>';
+      (s.barkod ? '<p class="ipucu">Barkod: ' + esc(s.barkod) + ' (bir dahaki okutmada bu ürün bulunur)</p>' : '') +
+      '<label class="onay"><input type="checkbox" id="eKaydet"' + (s.barkod ? ' checked' : '') + '> Yemeklerime kaydet (sonra aramada çıksın)</label>' +
+      '<button class="dugme" data-a="elleKaydet" style="margin-top:12px">Ekle · ' + esc(ogunAd(s.ogun)) + '</button></div>';
     return h;
-  }
+  };
 
   function elleKaydet() {
     var s = S.sheet;
@@ -578,18 +654,41 @@
     if (!ad) { toast('Ne yediğini yaz'); return; }
     if (!(k >= 0)) { toast('Kaloriyi yaz'); return; }
     var y = { ad: ad, k: Math.round(k), c: oku($('eC').value) || 0, p: oku($('eP').value) || 0, f: oku($('eF').value) || 0, birimler: [{ ad: 'porsiyon', g: 100 }], kaynak: 'elle' };
+    if (s.barkod) y.barkod = s.barkod;
+    if ($('eKaydet').checked) {
+      V().yemeklerim = V().yemeklerim.filter(function (x) { return x.ad !== ad; });
+      V().yemeklerim.unshift(Depo.yemekKopya(y));
+    }
     kayitYaz(y, s.ogun, 'porsiyon', 1);
     render();
-    S.sheet = s.geri; renderSheet();
+    var geri = s.geri;
+    while (geri && geri.tur !== 'ekle') geri = geri.geri;
+    if (geri) { S.sheet = geri; renderSheet(); } else sheetKapat();
     toast('Eklendi: ' + ad);
   }
 
+  // Yemeklerim listesi
+  SHEETLER.yemeklerim = function () {
+    var l = V().yemeklerim;
+    var h = basHtml('Yemeklerim', 'kapat') + '<div class="sheet-govde">';
+    if (!l.length) h += '<div class="bos"><span class="em">📒</span>Henüz kayıtlı yemeğin yok. Yemek eklerken "Hızlı ekle"de "Yemeklerime kaydet"i seç.</div>';
+    else {
+      h += '<div class="liste">';
+      l.forEach(function (y, i) {
+        h += '<div class="yemek-satir"><span class="ad"><b>' + esc(y.ad) + '</b><span>' + (y.barkod ? 'barkodlu · ' : '') + sayi(Hesap.besin(y, gramBul(y, varsayilan(y).birim, 1)).k) + ' kcal / ' + esc(varsayilan(y).birim) + '</span></span>' +
+          '<button class="mini-arti sil" data-a="yemekSil" data-v="' + i + '" aria-label="Sil">' + ik('cop') + '</button></div>';
+      });
+      h += '</div>';
+    }
+    return h + '</div>';
+  };
+
   // Su ayarı
-  function suHtml() {
+  SHEETLER.su = function () {
     var A = V().ayarlar;
     var h = basHtml('Su hedefi', 'kapat') + '<div class="sheet-govde"><div class="bolum-bas">Günlük hedef</div><div class="ogun-sec">';
     [1500, 2000, 2500, 3000, 3500].forEach(function (x) {
-      h += '<button class="' + (A.suHedef === x ? 'secili' : '') + '" data-a="suHedef" data-v="' + x + '">' + sayi(x / 1000, true) + ' L</button>';
+      h += '<button class="' + (A.suHedef === x ? 'secili' : '') + '" data-a="suHedef" data-v="' + x + '">' + litre(x) + ' L</button>';
     });
     h += '</div><div class="bolum-bas">Bardak büyüklüğü</div><div class="ogun-sec">';
     [200, 250, 300, 500].forEach(function (x) {
@@ -597,6 +696,43 @@
     });
     h += '</div></div>';
     return h;
+  };
+
+  // Kalori / makro / öğün dağılımı
+  KISA.hedef = 1;
+  SHEETLER.hedef = function () {
+    var A = V().ayarlar, p = V().profil, m = p.makro, o = A.ogunOran;
+    var h = basHtml('Hedefler', 'kapat') + '<div class="sheet-govde">';
+    h += '<div class="form-alan"><label for="hK">Günlük kalori hedefi (boş bırakırsan otomatik: ' + sayi(p.kalori) + ')</label><input id="hK" type="text" inputmode="numeric" value="' + (A.kaloriElle || '') + '" placeholder="' + p.kalori + '"></div>';
+    h += '<div class="bolum-bas">Makro oranları (toplam 100)</div><div class="uc">' +
+      '<div class="form-alan"><label for="hC">Karb. %</label><input id="hC" type="text" inputmode="numeric" value="' + m.c + '"></div>' +
+      '<div class="form-alan"><label for="hP">Protein %</label><input id="hP" type="text" inputmode="numeric" value="' + m.p + '"></div>' +
+      '<div class="form-alan"><label for="hF">Yağ %</label><input id="hF" type="text" inputmode="numeric" value="' + m.f + '"></div></div>';
+    h += '<div class="bolum-bas">Öğünlere dağılım % (toplam 100)</div><div class="iki">';
+    OGUNLER.forEach(function (g) {
+      h += '<div class="form-alan"><label for="hO' + g.id + '">' + g.ad + '</label><input id="hO' + g.id + '" type="text" inputmode="numeric" value="' + o[g.id] + '"></div>';
+    });
+    h += '</div><label class="onay"><input type="checkbox" id="hYak"' + (A.yakilanEkle ? ' checked' : '') + '> Egzersizle yakılan kaloriyi günlük hedefe ekle</label>';
+    h += '<p class="hata" id="hHata"></p><button class="dugme" data-a="hedefKaydet">Kaydet</button></div>';
+    return h;
+  };
+  function hedefKaydet() {
+    var A = V().ayarlar, p = V().profil;
+    var k = $('hK').value.trim() ? oku($('hK').value) : null;
+    var m = { c: oku($('hC').value), p: oku($('hP').value), f: oku($('hF').value) };
+    var o = {};
+    OGUNLER.forEach(function (g) { o[g.id] = oku($('hO' + g.id).value); });
+    var hata = '';
+    if (k != null && !(k >= 800 && k <= 6000)) hata = 'Kalori 800 ile 6000 arasında olmalı.';
+    else if ([m.c, m.p, m.f].some(isNaN) || m.c + m.p + m.f !== 100) hata = 'Makro oranlarının toplamı 100 olmalı (şu an ' + (m.c + m.p + m.f || 0) + ').';
+    else {
+      var t = 0; for (var x in o) { if (isNaN(o[x])) t = NaN; else t += o[x]; }
+      if (t !== 100) hata = 'Öğün oranlarının toplamı 100 olmalı (şu an ' + (t || 0) + ').';
+    }
+    if (hata) { $('hHata').textContent = hata; return; }
+    A.kaloriElle = k ? Math.round(k) : null;
+    p.makro = m; A.ogunOran = o; A.yakilanEkle = $('hYak').checked;
+    kaydet(); sheetKapat(); render(); toast('Hedefler kaydedildi');
   }
 
   // ---------- yedek ----------
@@ -651,6 +787,7 @@
     kapat: sheetKapat,
     geri: function () {
       var g = S.sheet && S.sheet.geri;
+      KAPANIS.forEach(function (f) { try { f(S.sheet); } catch (e) {} });
       if (g) { S.sheet = g; renderSheet(); } else sheetKapat();
     },
     ekleSekme: function (el) { S.sheet.sekme = el.dataset.v; sonuclariYenile(); },
@@ -671,7 +808,7 @@
     },
     ogunSec: function (el) {
       S.sheet.ogun = el.dataset.v;
-      document.querySelectorAll('.ogun-sec button').forEach(function (b) { b.classList.toggle('secili', b === el); });
+      el.parentNode.querySelectorAll('button').forEach(function (b) { b.classList.toggle('secili', b === el); });
     },
     favori: function (el) {
       Depo.favoriDegistir(S.sheet.y);
@@ -681,14 +818,13 @@
     },
     detayKaydet: detayKaydet,
     kayitSil: function () {
-      var s = S.sheet, g = Depo.gun(S.tarih);
+      var s = S.sheet, g = Depo.gun(s.tarih);
       g.kayitlar = g.kayitlar.filter(function (x) { return x.id !== s.kayitId; });
       kaydet(); render(); sheetKapat();
       toast('Silindi: ' + s.y.ad);
     },
-    elle: function () { S.sheet = { tur: 'elle', ogun: S.sheet.ogun, geri: S.sheet }; renderSheet(); },
+    elle: function () { sheetGec({ tur: 'elle', ogun: S.sheet.ogun, ad: S.sheet.q || '' }); },
     elleKaydet: elleKaydet,
-    yakinda: function () { toast('Bu özellik sıradaki güncellemede geliyor'); },
     su: function (el) {
       var g = Depo.gun(S.tarih), b = V().ayarlar.bardak, n = Number(el.dataset.v);
       var dolu = Math.round((g.su || 0) / b);
@@ -698,6 +834,15 @@
     suAyar: function () { S.sheet = { tur: 'su' }; sheetAc(); },
     suHedef: function (el) { V().ayarlar.suHedef = Number(el.dataset.v); kaydet(); renderSheet(); render(); },
     suBardak: function (el) { V().ayarlar.bardak = Number(el.dataset.v); kaydet(); renderSheet(); render(); },
+    hedefAyar: function () { S.sheet = { tur: 'hedef' }; sheetAc(); },
+    hedefKaydet: hedefKaydet,
+    yemeklerim: function () { S.sheet = { tur: 'yemeklerim' }; sheetAc(); },
+    yemekSil: function (el) {
+      var y = V().yemeklerim[Number(el.dataset.v)];
+      if (!y || !confirm('"' + y.ad + '" Yemeklerim listesinden silinsin mi?')) return;
+      V().yemeklerim.splice(Number(el.dataset.v), 1);
+      kaydet(); renderSheet(); render();
+    },
     profilDuzenle: function () { kurulumBaslat(true); render(); window.scrollTo(0, 0); },
     yedekAl: yedekAl,
     sifirla: function () {
@@ -715,33 +860,31 @@
   });
   $('perde').addEventListener('click', sheetKapat);
 
+  GIRIS.kurGiris = function (t) {
+    if (!S.kur) return;
+    S.kur.t[ADIMLAR[S.kur.adim].alan] = t.value;
+    if (S.kur.hata) { S.kur.hata = ''; $('kurHata').textContent = ''; }
+  };
+  GIRIS.araKutu = function (t) { if (S.sheet) { S.sheet.q = t.value; sonuclariYenile(); } };
+  GIRIS.adetKutu = function (t) { if (S.sheet) { S.sheet.adet = t.value; $('detayCanli').innerHTML = detayCanliHtml(S.sheet); } };
   document.addEventListener('input', function (e) {
-    var t = e.target;
-    if (t.id === 'kurGiris' && S.kur) {
-      S.kur.t[ADIMLAR[S.kur.adim].alan] = t.value;
-      if (S.kur.hata) { S.kur.hata = ''; $('kurHata').textContent = ''; }
-    } else if (t.id === 'araKutu' && S.sheet) {
-      S.sheet.q = t.value;
-      sonuclariYenile();
-    } else if (t.id === 'adetKutu' && S.sheet) {
-      S.sheet.adet = t.value;
-      $('detayCanli').innerHTML = detayCanliHtml(S.sheet);
-    }
+    var f = GIRIS[e.target.id] || GIRIS[e.target.dataset && e.target.dataset.g];
+    if (f) f(e.target, e);
   });
 
+  DEGISIM.birimSec = function (t) {
+    if (!S.sheet) return;
+    var eski = S.sheet.birim;
+    S.sheet.birim = t.value;
+    if (t.value === 'g' && eski !== 'g') S.sheet.adet = String(Math.round(gramBul(S.sheet.y, eski, oku(S.sheet.adet) || 1)));
+    else if (t.value !== 'g' && eski === 'g') S.sheet.adet = '1';
+    $('adetKutu').value = S.sheet.adet;
+    $('detayCanli').innerHTML = detayCanliHtml(S.sheet);
+  };
+  DEGISIM.yedekDosya = function (t) { if (t.files && t.files[0]) { yedekYukle(t.files[0]); t.value = ''; } };
   document.addEventListener('change', function (e) {
-    var t = e.target;
-    if (t.id === 'birimSec' && S.sheet) {
-      var eski = S.sheet.birim;
-      S.sheet.birim = t.value;
-      if (t.value === 'g' && eski !== 'g') S.sheet.adet = String(Math.round(gramBul(S.sheet.y, eski, oku(S.sheet.adet) || 1)));
-      else if (t.value !== 'g' && eski === 'g') S.sheet.adet = '1';
-      $('adetKutu').value = S.sheet.adet;
-      $('detayCanli').innerHTML = detayCanliHtml(S.sheet);
-    } else if (t.id === 'yedekDosya' && t.files && t.files[0]) {
-      yedekYukle(t.files[0]);
-      t.value = '';
-    }
+    var f = DEGISIM[e.target.id] || DEGISIM[e.target.dataset && e.target.dataset.g];
+    if (f) f(e.target, e);
   });
 
   document.addEventListener('keydown', function (e) {
@@ -759,9 +902,16 @@
     if (b !== sonBugun) { if (S.tarih === sonBugun) S.tarih = b; sonBugun = b; if (!S.sheet) render(); }
   });
 
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
-  }
-
-  render();
+  window.App = {
+    SURUM: SURUM, S: S, V: V, OGUNLER: OGUNLER, AYLAR: AYLAR, GUNLER: GUNLER, GUN_KISA: GUN_KISA, IK: IK,
+    ik: ik, esc: esc, sayi: sayi, litre: litre, oku: oku, bugun: bugun, kaydir: kaydir, tarihEtiket: tarihEtiket, kisaTarih: kisaTarih, $: $,
+    toast: toast, kaydet: kaydet, render: render, renderSheet: renderSheet, sheetAc: sheetAc, sheetKapat: sheetKapat, sheetGec: sheetGec, basHtml: basHtml,
+    gramBul: gramBul, varsayilan: varsayilan, miktarYazi: miktarYazi, detayAc: detayAc, kayitYaz: kayitYaz, offDonustur: offDonustur,
+    ogunAd: ogunAd, halkaHtml: halkaHtml, gunHedef: gunHedef, anaHedef: anaHedef, yakilan: yakilan, profilKiloGuncelle: profilKiloGuncelle,
+    aks: AKS, sekmeHtml: SEKME_HTML, sekmeSonra: SEKME_SONRA, sheetler: SHEETLER, kisa: KISA, giris: GIRIS, degisim: DEGISIM, kapanis: KAPANIS,
+    basla: function () {
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
+      render();
+    }
+  };
 })();

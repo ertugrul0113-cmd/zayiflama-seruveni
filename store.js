@@ -7,11 +7,20 @@
     return {
       surum: 1,
       profil: null,          // kurulumda dolar
-      gunler: {},            // 'YYYY-MM-DD' -> { kayitlar: [], su: ml }
+      gunler: {},            // 'YYYY-MM-DD' -> { kayitlar: [], su: ml, egzersiz: [], ruh: 1-5, belirti: [] }
       sonlar: [],            // son eklenen yemekler (yemek nesnesi + son birim)
       favoriler: [],         // yemek nesneleri
+      yemeklerim: [],        // kullanıcının kaydettiği yemekler / ürünler (barkodlu olabilir)
       kilolar: [],           // { tarih: 'YYYY-MM-DD', kg }
-      ayarlar: { suHedef: 2000, bardak: 250, ogunOran: { kahvalti: 25, ogle: 35, aksam: 30, ara: 10 } }
+      olculer: [],           // { tarih, bel, kalca, gogus, kol, boyun }
+      oruc: { plan: '16:8', basla: null, gecmis: [], haftaGunleri: [] },
+      tarifler: [],          // kullanıcının kaydettiği (yapay zekâ) tarifleri
+      alisveris: [],         // { id, ad, alindi }
+      plan: null,            // yapay zekâ günlük öğün planı
+      ayarlar: {
+        suHedef: 2000, bardak: 250, ogunOran: { kahvalti: 25, ogle: 35, aksam: 30, ara: 10 },
+        geminiAnahtar: '', geminiModel: 'gemini-flash-latest', yakilanEkle: true, kaloriElle: null
+      }
     };
   }
 
@@ -39,11 +48,15 @@
 
   function gun(anahtar) {
     if (!veri.gunler[anahtar]) veri.gunler[anahtar] = { kayitlar: [], su: 0 };
-    return veri.gunler[anahtar];
+    var g = veri.gunler[anahtar];
+    if (!g.egzersiz) g.egzersiz = [];
+    if (!g.belirti) g.belirti = [];
+    return g;
   }
 
   function gunOku(anahtar) {
-    return veri.gunler[anahtar] || { kayitlar: [], su: 0 };
+    var g = veri.gunler[anahtar] || { kayitlar: [], su: 0 };
+    return { kayitlar: g.kayitlar || [], su: g.su || 0, egzersiz: g.egzersiz || [], ruh: g.ruh || 0, belirti: g.belirti || [] };
   }
 
   function yeniId() {
@@ -52,7 +65,9 @@
 
   // Yemek nesnesinin taşınabilir kopyası (liste sırası değişse de bozulmaz)
   function yemekKopya(y) {
-    return { ad: y.ad, marka: y.marka || '', k: y.k, p: y.p, c: y.c, f: y.f, birimler: y.birimler || [], kaynak: y.kaynak || 'liste' };
+    var k = { ad: y.ad, marka: y.marka || '', k: y.k, p: y.p, c: y.c, f: y.f, birimler: y.birimler || [], kaynak: y.kaynak || 'liste' };
+    if (y.barkod) k.barkod = y.barkod;
+    return k;
   }
 
   function sonaEkle(y, birim, adet) {
