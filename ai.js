@@ -191,6 +191,7 @@
       '<li>Çıkan <b>AIza…</b> ile başlayan yazıyı kopyala, buraya yapıştır.</li></ol>' +
       '<a class="dugme ikincil" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio\'yu aç</a>';
     h += '<div class="form-alan" style="margin-top:16px"><label for="yzAnahtar">Gemini anahtarı</label><input id="yzAnahtar" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="AIza..." value="' + esc(a.geminiAnahtar) + '"></div>';
+    if (navigator.clipboard && navigator.clipboard.readText) h += '<button class="dugme ikincil" data-a="yzYapistir" style="margin-bottom:10px">📋 Panodan yapıştır</button>';
     h += '<details class="ileri"><summary>Gelişmiş</summary><div class="form-alan"><label for="yzModel">Model adı</label><input id="yzModel" type="text" autocapitalize="off" value="' + esc(a.geminiModel) + '"></div></details>';
     h += '<p class="hata" id="yzDurum" style="text-align:left"></p>';
     h += '<button class="dugme" data-a="yzKaydet">Kaydet ve dene</button>';
@@ -240,6 +241,15 @@
       A.render();
       setTimeout(function () { if (A.S.sheet && A.S.sheet.tur === 'yzAyar') aks.geri(); }, 1200);
     }).catch(function (e) { d.style.color = ''; d.textContent = e.message; });
+  };
+  aks.yzYapistir = function () {
+    navigator.clipboard.readText().then(function (t) {
+      var m = String(t || '').match(/AIza[0-9A-Za-z_\-]{20,}/);
+      var d = $('yzDurum');
+      if (!m) { d.style.color = ''; d.textContent = 'Panoda Gemini anahtarı bulunamadı. Önce anahtarı kopyala (AIza ile başlar).'; return; }
+      $('yzAnahtar').value = m[0];
+      aks.yzKaydet();
+    }).catch(function () { A.toast('Panoya erişilemedi. Kutuya basılı tutup "Yapıştır" de.'); });
   };
   aks.yzSil = function () {
     if (!confirm('Gemini anahtarı bu telefondan silinsin mi?')) return;
