@@ -23,51 +23,106 @@
     return JSON.parse(t.slice(a, b + 1));
   }
 
-  function modeller() {
-    var l = [V().ayarlar.geminiModel || 'gemini-flash-latest', 'gemini-flash-latest', 'gemini-2.5-flash'];
+  var API = 'https://generativelanguage.googleapis.com/v1beta/models';
+  var EN_FAZLA_MODEL = 4;
+
+  // Google model adlarını sık değiştiriyor ve eski modelleri yeni hesaplara kapatıyor.
+  // Bu yüzden önce kısa takma adları deniyoruz; olmazsa bu anahtarın gerçekten kullanabildiği
+  // "flash" modellerini Google'a sorup onları deniyoruz.
+  function ilkModeller() {
+    var l = [V().ayarlar.geminiModel, 'gemini-flash-latest', 'gemini-flash-lite-latest'];
     return l.filter(function (m, i) { return m && l.indexOf(m) === i; });
   }
+  var acikListe = null; // { anahtar, soz }
+  function acikModeller(anahtar) {
+    if (acikListe && acikListe.anahtar === anahtar) return acikListe.soz;
+    var soz = fetch(API + '?pageSize=1000', { headers: { 'x-goog-api-key': anahtar } })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (j) {
+        var l = (j.models || []).filter(function (m) {
+          var ad = String(m.name || '');
+          return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0 && /flash/i.test(ad) &&
+            !/image|tts|audio|live|embed|native|robotics|computer/i.test(ad);
+        }).map(function (m) { return String(m.name).replace(/^models\//, ''); });
+        function puan(ad) {
+          var s = /-latest$/.test(ad) ? 1000 : 0;
+          var v = ad.match(/gemini-(\d+(?:\.\d+)?)/);
+          if (v) s += Number(v[1]) * 10;
+          if (/preview|exp/i.test(ad)) s -= 5;
+          return s;
+        }
+        return l.sort(function (a, b) { return puan(b) - puan(a); });
+      })
+      .catch(function () { return []; });
+    acikListe = { anahtar: anahtar, soz: soz };
+    return soz;
+  }
+
+  // Yeni modeller cevaptan önce uzun uzun "düşünüyor"; fotoğrafta bu 1 dakikayı aşabiliyor.
+  // Düşünmeyi en aza indiriyoruz. Model bir ayarı kabul etmezse sıradakini deniyoruz.
+  var DUSUNME = [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, { thinkingBudget: 0 }, null];
 
   // parts: [{text}, {inline_data:{mime_type,data}}] -> Promise(JSON nesnesi)
   function istek(parts, sicaklik) {
     var anahtar = V().ayarlar.geminiAnahtar;
     if (!anahtar) return Promise.reject(new Error('Önce Profil > Yapay zekâ bölümünden Gemini anahtarını gir.'));
-    // Yeni Gemini modelleri cevaptan önce uzun uzun "düşünüyor"; fotoğrafta bu 1 dakikayı aşabiliyor.
-    // Düşünmeyi kapatıyoruz (model desteklemezse düşünme ayarı olmadan tekrar deniyoruz).
-    function govdeYap(dusunmeKapali) {
+    function govdeYap(d) {
       var gc = { responseMimeType: 'application/json', temperature: sicaklik == null ? 0.3 : sicaklik };
-      if (dusunmeKapali) gc.thinkingConfig = { thinkingBudget: 0 };
+      if (DUSUNME[d]) gc.thinkingConfig = DUSUNME[d];
       return JSON.stringify({ contents: [{ role: 'user', parts: parts }], generationConfig: gc });
     }
-    var ml = modeller();
-    function dene(i, dusunmeKapali) {
-      if (dusunmeKapali == null) dusunmeKapali = true;
-      var sonModel = i + 1 >= ml.length;
+    var adaylar = ilkModeller(), denenen = 0, listeAlindi = false;
+    var gecikti = false, sonHata = null, bulunamadi = null;
+
+    function siradaki() {
+      if (denenen >= EN_FAZLA_MODEL) return Promise.resolve(null);
+      if (adaylar.length) return Promise.resolve(adaylar.shift());
+      if (listeAlindi) return Promise.resolve(null);
+      listeAlindi = true;
+      return acikModeller(anahtar).then(function (l) {
+        adaylar = l.filter(function (m) { return denenenler.indexOf(m) < 0; });
+        return adaylar.length ? adaylar.shift() : null;
+      });
+    }
+    var denenenler = [];
+    function bitir() {
+      if (gecikti) throw new Error('Cevap çok gecikti. İnternetin yavaş olabilir ya da Gemini yoğun. Biraz sonra tekrar dene.');
+      if (sonHata) throw sonHata;
+      throw new Error('Bu anahtarla kullanılabilen bir Gemini modeli bulunamadı.' + (bulunamadi ? ' (' + bulunamadi.slice(0, 120) + ')' : ''));
+    }
+    function sonraki() {
+      return siradaki().then(function (m) {
+        if (!m) return bitir();
+        denenen++; denenenler.push(m);
+        return dene(m, 0);
+      });
+    }
+    function dene(model, d) {
       var ctrl = window.AbortController ? new AbortController() : null;
-      var zaman = setTimeout(function () { if (ctrl) ctrl.abort(); }, sonModel ? 90000 : 45000);
-      return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(ml[i]) + ':generateContent', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': anahtar }, body: govdeYap(dusunmeKapali),
+      var zaman = setTimeout(function () { if (ctrl) ctrl.abort(); }, 40000);
+      return fetch(API + '/' + encodeURIComponent(model) + ':generateContent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': anahtar }, body: govdeYap(d),
         signal: ctrl ? ctrl.signal : undefined
       }).then(function (r) {
         clearTimeout(zaman);
         return r.json().catch(function () { return {}; }).then(function (j) {
-          var hm = j.error && j.error.message;
-          if (r.status === 400 && dusunmeKapali && /think/i.test(hm || '')) return dene(i, false);
-          if ((r.status === 404 || r.status >= 500) && !sonModel) return dene(i + 1);
+          var hm = String((j.error && j.error.message) || '');
+          if (r.status === 400 && DUSUNME[d] && /think/i.test(hm)) return dene(model, d + 1);
+          if (r.status === 404) { bulunamadi = hm; return sonraki(); }
+          if (r.status >= 500) { sonHata = new Error(hataMetni(r.status, hm)); return sonraki(); }
           if (!r.ok) throw new Error(hataMetni(r.status, hm));
           var c = j.candidates && j.candidates[0];
-          var metin = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
+          var metin = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.thought ? '' : (p.text || ''); }).join('') : '';
           if (!metin) throw new Error('Yapay zekâ boş cevap verdi' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '') + '. Tekrar dene.');
           return jsonAyikla(metin);
         });
       }, function (e) {
         clearTimeout(zaman);
-        // Bu model geç kaldıysa sıradaki (daha hızlı) modeli dene
-        if (e && e.name === 'AbortError' && !sonModel) return dene(i + 1);
-        throw new Error(e && e.name === 'AbortError' ? 'Cevap çok gecikti. Tekrar dene.' : 'İnternete ulaşılamadı. Bağlantını kontrol et.');
+        if (e && e.name === 'AbortError') { gecikti = true; return sonraki(); }
+        throw new Error('İnternete ulaşılamadı. Bağlantını kontrol et.');
       });
     }
-    return dene(0);
+    return sonraki();
   }
 
   // Fotoğrafı küçült (en uzun kenar 1024 px) ve base64 yap

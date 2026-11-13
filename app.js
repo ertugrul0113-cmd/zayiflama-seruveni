@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  var SURUM = '0.2.2';
+  var SURUM = '0.2.3';
 
   Depo.yukle();
   function V() { return Depo.v; }
