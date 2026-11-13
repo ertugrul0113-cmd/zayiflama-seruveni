@@ -1,5 +1,5 @@
 // Önce internet, olmazsa önbellek: yeni sürüm telefona kendiliğinden gelir, internetsiz de açılır.
-var ONBELLEK = 'seruven-v3';
+var ONBELLEK = 'seruven-v4';
 var DOSYALAR = ['./', 'index.html', 'style.css', 'app.js', 'calc.js', 'foods.js', 'store.js', 'tarif-veri.js', 'ai.js', 'barkod.js', 'egzersiz.js',
   'oruc.js', 'ilerleme.js', 'tarifler.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 

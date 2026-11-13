@@ -32,22 +32,29 @@
   function istek(parts, sicaklik) {
     var anahtar = V().ayarlar.geminiAnahtar;
     if (!anahtar) return Promise.reject(new Error('Önce Profil > Yapay zekâ bölümünden Gemini anahtarını gir.'));
-    var govde = JSON.stringify({
-      contents: [{ role: 'user', parts: parts }],
-      generationConfig: { responseMimeType: 'application/json', temperature: sicaklik == null ? 0.3 : sicaklik }
-    });
+    // Yeni Gemini modelleri cevaptan önce uzun uzun "düşünüyor"; fotoğrafta bu 1 dakikayı aşabiliyor.
+    // Düşünmeyi kapatıyoruz (model desteklemezse düşünme ayarı olmadan tekrar deniyoruz).
+    function govdeYap(dusunmeKapali) {
+      var gc = { responseMimeType: 'application/json', temperature: sicaklik == null ? 0.3 : sicaklik };
+      if (dusunmeKapali) gc.thinkingConfig = { thinkingBudget: 0 };
+      return JSON.stringify({ contents: [{ role: 'user', parts: parts }], generationConfig: gc });
+    }
     var ml = modeller();
-    function dene(i) {
+    function dene(i, dusunmeKapali) {
+      if (dusunmeKapali == null) dusunmeKapali = true;
+      var sonModel = i + 1 >= ml.length;
       var ctrl = window.AbortController ? new AbortController() : null;
-      var zaman = setTimeout(function () { if (ctrl) ctrl.abort(); }, 60000);
+      var zaman = setTimeout(function () { if (ctrl) ctrl.abort(); }, sonModel ? 90000 : 45000);
       return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(ml[i]) + ':generateContent', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': anahtar }, body: govde,
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': anahtar }, body: govdeYap(dusunmeKapali),
         signal: ctrl ? ctrl.signal : undefined
       }).then(function (r) {
         clearTimeout(zaman);
         return r.json().catch(function () { return {}; }).then(function (j) {
-          if (r.status === 404 && i + 1 < ml.length) return dene(i + 1);
-          if (!r.ok) throw new Error(hataMetni(r.status, j.error && j.error.message));
+          var hm = j.error && j.error.message;
+          if (r.status === 400 && dusunmeKapali && /think/i.test(hm || '')) return dene(i, false);
+          if ((r.status === 404 || r.status >= 500) && !sonModel) return dene(i + 1);
+          if (!r.ok) throw new Error(hataMetni(r.status, hm));
           var c = j.candidates && j.candidates[0];
           var metin = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
           if (!metin) throw new Error('Yapay zekâ boş cevap verdi' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '') + '. Tekrar dene.');
@@ -55,6 +62,8 @@
         });
       }, function (e) {
         clearTimeout(zaman);
+        // Bu model geç kaldıysa sıradaki (daha hızlı) modeli dene
+        if (e && e.name === 'AbortError' && !sonModel) return dene(i + 1);
         throw new Error(e && e.name === 'AbortError' ? 'Cevap çok gecikti. Tekrar dene.' : 'İnternete ulaşılamadı. Bağlantını kontrol et.');
       });
     }
